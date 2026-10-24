@@ -145,6 +145,19 @@ pipeline is advisory** — every other step blocks (see the gate table below).
 
 **Phase 1A is complete.**
 
+### Run 5 — commit `379dc65` — Phase 2, distributor — 2026-10-24
+
+`secrets` ✅ · build ✅ · **54 tests, 4 failures** · coverage and deploy-smoke did not run.
+
+| Failure | Cause | Fix |
+|---|---|---|
+| `test_ConfigSettersOnlyConfigRole`, `test_PauseOnlyPauser`, `test_SealOnlySealer` — "next call did not revert" | `dist.CONFIG_ROLE()` / `PAUSER_ROLE()` / `SEALER_ROLE()` sat inside the `expectRevert` argument, i.e. **between `vm.prank` and the call under test**, consuming the prank. The restricted call then ran as the test contract, which holds the role. | Role constants read into locals before the prank; positive controls added (the call succeeds for the holder). |
+| `invariant_BalanceCoversOutstandingAllocation` — vacuity guard "handler never claimed: 0 <= 0" | At `block.timestamp == 0` the current epoch is 0, so `seal` had no ended epoch to seal and no-op'd; `claim` then had nothing to claim. The guard is evaluated per run, so **every** run must seal and claim. | Handler is now state-aware: `_prepareEpoch` warps until an epoch has ended and is unsealed; a seal immediately claims once; a claim seals on demand first. `targetSelector` targets only seal/claimA/claimB (no `targetContract`, so the sequence cannot burn its budget on view getters). |
+
+**Implication recorded:** the other three distributor invariants (I1, I3, I4) passed on runs
+where nothing happened, so they were **unproven** until the guard went green. They are not
+claimed as passing.
+
 
 
 | Artefact | Contents |

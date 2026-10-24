@@ -301,11 +301,12 @@ script asserts `allocation == 1e9`; tests deploy small allocations to exercise e
 
 ## ADR-018 — Crafting fee: 0.5 PRIME flat per craft (proposed, awaiting confirmation)
 
-**Status:** PROPOSED — amount needs client sign-off · **Date:** 2026-10-24
+**Status:** **ACCEPTED BY CLIENT 2026-10-24** · **Date:** 2026-10-24
 
 | Parameter | Value |
 |---|---|
 | `craftFee` | **0.5 PRIME** per craft action, flat |
+| `freeCraftsPerAccount` | **5** — first five crafts per account are free, enforced on-chain |
 | `MAX_CRAFT_FEE` | 5 PRIME, immutable ceiling |
 | Change control | Timelock only, never above `MAX_CRAFT_FEE` |
 
@@ -322,9 +323,12 @@ script asserts `allocation == 1e9`; tests deploy small allocations to exercise e
 - A flat fee is trivially auditable and displayable; percentage-of-value fees on crafting
   would need a price reference we do not have.
 
-**Flagged consequence:** new players start with 0 PRIME and cannot craft until they earn.
-Either grant a small starter allocation from `RewardDistributor`, or exempt the first N
-crafts per account. Needs a product decision before Phase 2 ships `Crafting`.
+**New-player friction, resolved by the client (2026-10-24):** new players hold 0 PRIME and
+could not pay a crafting fee. The first **5 crafts per account are free**, tracked by an
+on-chain per-account counter in `Crafting` (not a server-side flag, so it cannot be reset
+by the backend). After that the flat fee applies. The counter is per address, so a bot's
+cost is 5 free crafts per address — acceptable, because the free crafts still require the
+recipe inputs, which are themselves obtained through play.
 
 ---
 

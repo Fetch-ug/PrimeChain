@@ -87,8 +87,11 @@ contract RewardDistributorTest is Test {
     function _claim(address account, uint256 epochId, uint256 amount, address sibling, uint256 siblingAmount)
         internal
     {
+        // Build the proof BEFORE pranking: nothing may run between `vm.prank` and
+        // the call under test, or the prank is consumed by the intervening call.
+        bytes32[] memory proof = _proof(epochId, sibling, siblingAmount);
         vm.prank(account);
-        dist.claim(epochId, amount, _proof(epochId, sibling, siblingAmount));
+        dist.claim(epochId, amount, proof);
     }
 
     // ---------------------------------------------------------------------
@@ -254,13 +257,21 @@ contract RewardDistributorTest is Test {
 
     function test_SealOnlySealer() public {
         address stranger = makeAddr("stranger");
+        // Read the role BEFORE the prank. `dist.SEALER_ROLE()` is an external call;
+        // if it sits inside the expectRevert argument it consumes the prank and the
+        // restricted call then runs as the test contract (which holds the role).
+        bytes32 sealerRole = dist.SEALER_ROLE();
+
         vm.prank(stranger);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, dist.SEALER_ROLE()
-            )
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, sealerRole)
         );
         dist.sealEpoch(9, bytes32(uint256(1)), 1);
+        assertFalse(dist.isSealed(9), "stranger must not have sealed");
+
+        // Positive control: the same call succeeds for the role holder.
+        dist.sealEpoch(9, bytes32(uint256(1)), 1);
+        assertTrue(dist.isSealed(9), "sealer should be able to seal");
     }
 
     // ---------------------------------------------------------------------
@@ -287,15 +298,17 @@ contract RewardDistributorTest is Test {
         uint256 epochId = dist.currentEpoch() - 1;
         _seal(epochId, alice, MAX_PER_ACCOUNT, bob, MAX_PER_ACCOUNT, 2 * MAX_PER_ACCOUNT);
 
+        bytes32[] memory proof = _proof(epochId, bob, MAX_PER_ACCOUNT);
         vm.expectRevert(RewardDistributor.ZeroAmount.selector);
         vm.prank(alice);
-        dist.claim(epochId, 0, _proof(epochId, bob, MAX_PER_ACCOUNT));
+        dist.claim(epochId, 0, proof);
     }
 
     function test_ClaimRevertsWhenNotSealed() public {
+        bytes32[] memory proof = _proof(9, bob, 1e18);
         vm.expectRevert(abi.encodeWithSelector(RewardDistributor.EpochNotSealed.selector, uint256(9)));
         vm.prank(alice);
-        dist.claim(9, 1e18, _proof(9, bob, 1e18));
+        dist.claim(9, 1e18, proof);
     }
 
     function test_ClaimRevertsOnSecondClaim() public {
@@ -303,9 +316,10 @@ contract RewardDistributorTest is Test {
         _seal(epochId, alice, MAX_PER_ACCOUNT, bob, MAX_PER_ACCOUNT, 2 * MAX_PER_ACCOUNT);
         _claim(alice, epochId, MAX_PER_ACCOUNT, bob, MAX_PER_ACCOUNT);
 
+        bytes32[] memory proof = _proof(epochId, bob, MAX_PER_ACCOUNT);
         vm.expectRevert(RewardDistributor.AlreadyClaimed.selector);
         vm.prank(alice);
-        dist.claim(epochId, MAX_PER_ACCOUNT, _proof(epochId, bob, MAX_PER_ACCOUNT));
+        dist.claim(epochId, MAX_PER_ACCOUNT, proof);
     }
 
     function test_ClaimRevertsAboveAccountCap() public {
@@ -313,11 +327,12 @@ contract RewardDistributorTest is Test {
         uint256 overCap = MAX_PER_ACCOUNT + 1;
         _seal(epochId, alice, overCap, bob, 0, overCap);
 
+        bytes32[] memory proof = _proof(epochId, bob, 0);
         vm.expectRevert(
             abi.encodeWithSelector(RewardDistributor.AccountCapExceeded.selector, overCap, MAX_PER_ACCOUNT)
         );
         vm.prank(alice);
-        dist.claim(epochId, overCap, _proof(epochId, bob, 0));
+        dist.claim(epochId, overCap, proof);
     }
 
     function test_ClaimRevertsAboveEpochCap() public {
@@ -331,13 +346,14 @@ contract RewardDistributorTest is Test {
         _claim(alice, epochId, MAX_PER_ACCOUNT, bob, MAX_PER_ACCOUNT);
         assertEq(dist.epochPaid(epochId), MAX_PER_ACCOUNT);
 
+        bytes32[] memory proof = _proof(epochId, alice, MAX_PER_ACCOUNT);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardDistributor.EpochCapExceeded.selector, MAX_PER_ACCOUNT, 300e18 - MAX_PER_ACCOUNT
             )
         );
         vm.prank(bob);
-        dist.claim(epochId, MAX_PER_ACCOUNT, _proof(epochId, alice, MAX_PER_ACCOUNT));
+        dist.claim(epochId, MAX_PER_ACCOUNT, proof);
     }
 
     function test_ClaimRevertsWhenPaused() public {
@@ -345,9 +361,10 @@ contract RewardDistributorTest is Test {
         _seal(epochId, alice, MAX_PER_ACCOUNT, bob, MAX_PER_ACCOUNT, 2 * MAX_PER_ACCOUNT);
         dist.pause();
 
+        bytes32[] memory proof = _proof(epochId, bob, MAX_PER_ACCOUNT);
         vm.expectRevert(Pausable.EnforcedPause.selector);
         vm.prank(alice);
-        dist.claim(epochId, MAX_PER_ACCOUNT, _proof(epochId, bob, MAX_PER_ACCOUNT));
+        dist.claim(epochId, MAX_PER_ACCOUNT, proof);
     }
 
     function test_ClaimRevertsOnInvalidProof() public {
@@ -355,9 +372,10 @@ contract RewardDistributorTest is Test {
         _seal(epochId, alice, MAX_PER_ACCOUNT, bob, MAX_PER_ACCOUNT, 2 * MAX_PER_ACCOUNT);
 
         // Proof built from a different sibling amount than the one committed.
+        bytes32[] memory proof = _proof(epochId, bob, MAX_PER_ACCOUNT - 1);
         vm.expectRevert(RewardDistributor.InvalidProof.selector);
         vm.prank(alice);
-        dist.claim(epochId, MAX_PER_ACCOUNT, _proof(epochId, bob, MAX_PER_ACCOUNT - 1));
+        dist.claim(epochId, MAX_PER_ACCOUNT, proof);
     }
 
     function test_ClaimRevertsWhenAllocationExhausted() public {
@@ -373,15 +391,17 @@ contract RewardDistributorTest is Test {
             1e18 // under-declared on purpose
         );
 
+        bytes32[] memory proofA = _proof(epochId, bob, 60e18);
         vm.prank(alice);
-        small.claim(epochId, 60e18, _proof(epochId, bob, 60e18));
+        small.claim(epochId, 60e18, proofA);
         assertEq(small.totalReleased(), 60e18);
 
+        bytes32[] memory proofB = _proof(epochId, alice, 60e18);
         vm.expectRevert(
             abi.encodeWithSelector(RewardDistributor.AllocationExhausted.selector, uint256(60e18), uint256(40e18))
         );
         vm.prank(bob);
-        small.claim(epochId, 60e18, _proof(epochId, alice, 60e18));
+        small.claim(epochId, 60e18, proofB);
     }
 
     function test_UnusedCapacityDoesNotRollOver() public {
@@ -401,13 +421,14 @@ contract RewardDistributorTest is Test {
 
         // If epoch 9's unused capacity rolled over, 200 + 200 would fit in 300+200.
         // It must not: the per-epoch budget is strictly per epoch.
+        bytes32[] memory proof = _proof(epoch10, alice, MAX_PER_ACCOUNT);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardDistributor.EpochCapExceeded.selector, MAX_PER_ACCOUNT, 300e18 - MAX_PER_ACCOUNT
             )
         );
         vm.prank(bob);
-        dist.claim(epoch10, MAX_PER_ACCOUNT, _proof(epoch10, alice, MAX_PER_ACCOUNT));
+        dist.claim(epoch10, MAX_PER_ACCOUNT, proof);
 
         assertEq(dist.epochPaid(epoch10), MAX_PER_ACCOUNT);
         assertEq(dist.epochPaid(epoch9), 100e18);
@@ -462,21 +483,25 @@ contract RewardDistributorTest is Test {
 
     function test_ConfigSettersOnlyConfigRole() public {
         address stranger = makeAddr("stranger");
+        bytes32 configRole = dist.CONFIG_ROLE(); // read before any prank
+
         vm.prank(stranger);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, dist.CONFIG_ROLE()
-            )
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, configRole)
         );
         dist.setMaxPerEpoch(1);
 
         vm.prank(stranger);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, dist.CONFIG_ROLE()
-            )
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, configRole)
         );
         dist.setMaxPerAccountPerEpoch(1);
+
+        // Positive control: the config role holder can change both caps.
+        dist.setMaxPerEpoch(1_500e18);
+        dist.setMaxPerAccountPerEpoch(100e18);
+        assertEq(dist.maxPerEpoch(), 1_500e18);
+        assertEq(dist.maxPerAccountPerEpoch(), 100e18);
     }
 
     // ---------------------------------------------------------------------
@@ -485,13 +510,18 @@ contract RewardDistributorTest is Test {
 
     function test_PauseOnlyPauser() public {
         address stranger = makeAddr("stranger");
+        bytes32 pauserRole = dist.PAUSER_ROLE(); // read before any prank
+
         vm.prank(stranger);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, dist.PAUSER_ROLE()
-            )
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, pauserRole)
         );
         dist.pause();
+        assertFalse(dist.paused(), "stranger must not have paused");
+
+        // Positive control: the pauser can pause.
+        dist.pause();
+        assertTrue(dist.paused(), "pauser should be able to pause");
     }
 
     function test_PauseBlocksSealAndClaimThenUnpauseWorks() public {
