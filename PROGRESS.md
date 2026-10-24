@@ -55,6 +55,39 @@ OpenZeppelin v5 test pattern.
 
 **Awaiting:** run 2.
 
+### Run 2 — commit `c65543b` — 2026-10-24
+
+| Workflow | Result | Detail |
+|---|---|---|
+| `secrets` | ✅ passed | |
+| `contracts` → build | ✅ passed | the `TOTAL_SUPPLY` fix worked |
+| `contracts` → 16 unit/fuzz tests | ✅ passed | all `Prime.t.sol` tests green |
+| `contracts` → invariant suite | ❌ failed | `invariant_BalancesSumToTotalSupply`: "handler never executed a transfer: 0 <= 0" — `transferCalls == 0` after 262,144 calls |
+
+**Root cause.** The fixture was empty: actors were never funded, so every handler
+action hit its `balance == 0` guard and returned without doing anything. The three
+invariants then passed **vacuously** — `sum(0 + 0…) == totalSupply` only because the
+treasury still held everything, and supply never changed because nothing changed.
+The `afterInvariant()` guard is what exposed it; without that guard this would have
+been reported as "invariant tests green", which is exactly the kind of false
+confidence that gets repeated to an auditor.
+
+**Fix (one file).**
+
+| File | Change |
+|---|---|
+| `contracts/test/Prime.invariants.t.sol` | `setUp` funds each of 4 actors with `1_000_000e18` from the treasury (`vm.startPrank`), sets standing mutual `type(uint256).max` approvals so the pull path can execute, and extends the vacuity guard to `transferFromCalls`. `PrimeHandler` unchanged. |
+
+**Handler review (requested).** No other vacuous path found: both actions early-return
+only on a zero balance, which is now reachable-but-not-universal; `bound(amount, 1,
+balance)` guarantees the transfer cannot revert on insufficient funds; the handler's
+per-call `approve(amount)` overwrites the standing max approval, so the fuzzed path is
+the **allowance-decrement** branch (the infinite-allowance branch stays covered by the
+unit test `test_InfiniteAllowanceIsNotDecremented`). `fail_on_revert = true`, so any
+handler revert would fail the run rather than be silently swallowed.
+
+**Awaiting:** run 3.
+
 
 
 | Artefact | Contents |
