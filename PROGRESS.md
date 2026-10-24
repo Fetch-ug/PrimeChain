@@ -3,7 +3,7 @@
 A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.md) and continue without re-deriving anything.
 
 **Current phase:** 1 — Local devnet + Prime token
-**Status:** 1A packaged and push-ready (unexecuted) — awaiting first CI run; 1B **blocked on a Docker host**
+**Status:** 1A in CI round 2 — round 1: `secrets` ✅, `contracts` ❌ at `forge build` (fixed); 1B **blocked on a Docker host**
 **Last updated:** 2026-10-24
 
 ---
@@ -22,6 +22,42 @@ A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.m
 
 ---
 
+## CI log (append-only)
+
+### Run 1 — 2026-10-24
+
+| Workflow | Result | Detail |
+|---|---|---|
+| `secrets` | ✅ passed | no credentials found |
+| `contracts` | ❌ failed at `forge build --sizes` | `Error (9582): Member "TOTAL_SUPPLY" not found or not visible after argument-dependent lookup in type(contract Prime)` at `script/DeployPrime.s.sol:32:40` |
+
+**Root cause.** `TOTAL_SUPPLY` is a `public constant`. In Solidity that generates an
+*instance* getter; it is **not** a member of the contract *type*, so
+`Prime.TOTAL_SUPPLY` is a compile error. (The code never reached tests, so this was
+the only error reported — the same pattern was present in
+`test/Prime.invariants.t.sol` and had not been reached yet.)
+
+**Fix (all three places, plus an audit of every identifier).**
+
+| File | Change |
+|---|---|
+| `contracts/script/DeployPrime.s.sol` | `Prime.TOTAL_SUPPLY` → local `EXPECTED_SUPPLY` literal. Better than the getter: asking the contract to confirm its own constant proves nothing; a literal fails the deploy if supply ever changes. Also `uint256(prime.decimals())` to remove `console2` overload ambiguity, and the supply log now uses `totalSupply()`. |
+| `contracts/test/Prime.invariants.t.sol` | added local `TOTAL` constant; 4 × `Prime.TOTAL_SUPPLY` → `TOTAL` |
+| `contracts/test/Prime.t.sol` | removed the last `prime.TOTAL_SUPPLY()` getter assertion (redundant with the genesis test) so nothing depends on the constant getter anywhere |
+
+**Identifier audit after the fix:** no type-level constant access remains anywhere;
+`TOTAL_SUPPLY` now appears only as (a) the declaration in `Prime.sol`, (b) internal
+constructor uses, (c) prose in docs. `smoke.py` uses its own independent literal.
+`PrimeHandler.transfer.selector` / `.transferFrom.selector` are function selectors
+(valid). Remaining type-scoped error selectors (`Prime.InvalidTreasury`,
+`IERC20Errors.*`) use the container-scoped error form, which is the standard
+OpenZeppelin v5 test pattern.
+
+**Awaiting:** run 2.
+
+
+
+| Artefact | Contents |
 ## Phase 0 — what was produced
 
 | Artefact | Contents |
@@ -55,9 +91,9 @@ A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.m
 | Criterion | Status |
 |---|---|
 | Token has no externally reachable mint path | ✅ by construction (single internal call in constructor) |
-| `forge build` green | ⬜ not run — no toolchain in this environment |
-| `forge test` + invariants green | ⬜ not run |
-| 100% coverage gate green | ⬜ not run |
+| `forge build` green | ❌ run 1 failed (`Error 9582`, fixed) — awaiting run 2 |
+| `forge test` + invariants green | ⬜ never reached (build failed first) |
+| 100% coverage gate green | ⬜ never reached |
 | Devnet boots; `smoke.py` passes | ⬜ blocked — no Docker |
 
 I am not marking those boxes. Only a CI run (or a machine with Foundry v1.8.6) can flip them, and per ADR-012 I will not claim a test result I have not seen.

@@ -206,7 +206,7 @@ Format: **Context → Decision → Consequences → Alternatives rejected**. Sta
 
 ## D4 — Emission parameters (client decision)
 
-**Status:** **APPROVED BY CLIENT, 2026-10-24 — recorded, not implemented.** Implementation is Phase 2 and is gated on the Phase 1 CI result. · **Date:** 2026-10-24
+**Status:** **APPROVED BY CLIENT, 2026-10-24 — both objections accepted, recorded, not implemented.** Implementation is Phase 2 and is gated on the Phase 1 CI result. · **Date:** 2026-10-24
 
 **Context.** `RewardDistributor` enforces the emission schedule on-chain. These are the client's numbers, recorded verbatim; the observations below are mine and do not change the approved values.
 
@@ -214,6 +214,7 @@ Format: **Context → Decision → Consequences → Alternatives rejected**. Sta
 |---|---|---|
 | `epochDuration` | **1 day** = 86,400 s | sealed epochs, not rolling |
 | `maxPerEpoch` | **500,000 PRIME** (`500_000e18`) | hard cap, no rollover |
+| `MAX_EPOCH_CAP` | **2,000,000 PRIME** (`2_000_000e18`) | **`immutable`** upper bound on `maxPerEpoch`; no role, including the Timelock, can exceed it |
 | `maxPerAccountPerEpoch` | **200 PRIME** (`200e18`) | hard per-account cap |
 | Total emissions ceiling | **1,000,000,000 PRIME** (`1_000_000_000e18`) | lifetime cap for the distributor |
 | Reserve | **1,000,000,000 PRIME** | stays in treasury, never reachable by the distributor |
@@ -222,33 +223,31 @@ Format: **Context → Decision → Consequences → Alternatives rejected**. Sta
 
 **Derived facts (arithmetic, not opinion).**
 
-- `1,000,000,000 / 500,000 = 2,000` epochs ≈ **5.5 years** at maximum rate. The
+- `1,000,000,000 / 500,000 = 2,000` epochs ≈ **5.5 years** at launch rate. The
   ceiling is the binding constraint long before the calendar is.
+- `1,000,000,000 / 2,000,000 = 500` epochs — even at the *maximum* permitted
+  rate, the ceiling cannot be exhausted in fewer than 500 days.
 - `500,000 / 200 = 2,500` — the two caps are calibrated to **at most 2,500
   fully-capped accounts per day**. That is the intended launch scale.
 
-**Observations I am flagging rather than silently implementing (items 1–3 are not approved and will not be built without a decision).**
+**Objections raised and resolved (2026-10-24).**
 
-1. **The per-account cap binds before the epoch cap does.** Above ~2,500 daily
-   recipients, either most players receive less than 200 PRIME, or the epoch cap
-   is exhausted and the remainder gets nothing. To avoid a daily "race for
-   rewards", allocations must be computed server-side and the epoch's merkle root
-   sealed **only after** the cap has been applied. The on-chain contract then
-   enforces the cap at root publication, not at claim time. Worth stating in the
-   published schedule.
-2. **"Never above the ceiling" is weaker than it sounds.** With only the 1B
-   lifetime ceiling enforced, one compromised Timelock proposal could set
-   `maxPerEpoch = 1,000,000,000` and drain the entire emissions budget in a single
-   epoch — a real risk given the 48h delay is the only backstop. I recommend an
-   **immutable `MAX_EPOCH_CAP`** (e.g. 2,000,000 = 4× the launch value) that no
-   role, including the Timelock, can exceed.
-3. **Reserve accounting must be structural, not documentary.** The distributor
+| # | Objection | Decision |
+|---|---|---|
+| 1 | The per-account cap binds before the epoch cap (~2,500 capped accounts/day), so a naive design produces a daily race for rewards | **ACCEPTED.** Allocations are computed **server-side**; the epoch's merkle root is sealed **only after** the epoch cap has been applied. The contract enforces the cap at root publication, never at claim time, so a late claim cannot be crowded out by an earlier one. |
+| 2 | A compromised Timelock could set `maxPerEpoch` to the whole 1B ceiling and drain it in one epoch; the 48h delay is the only backstop | **ACCEPTED.** Immutable `MAX_EPOCH_CAP = 2,000,000e18`; `setMaxPerEpoch` reverts above it, and the bound is `immutable` so no role can raise or remove it. Worst case becomes 500 epochs to exhaust the ceiling instead of one transaction. |
+
+**Still open — not approved, needs a decision before Phase 2 ships.**
+
+1. **Reserve accounting must be structural, not documentary.** The distributor
    should hold (or be able to draw) exactly the 1B emissions allocation, with an
    invariant `released + remaining == 1_000_000_000e18`; the other 1B must sit in
    the treasury and be unreachable from the distributor's code path. "We promise
-   not to spend the reserve" is not a control.
-4. **No rollover is the right call** and I would not change it: banked capacity
-   creates a burst that looks like a pump and breaks the published schedule.
+   not to spend the reserve" is not a control. I will implement it this way in
+   Phase 2 unless told otherwise.
+
+**Closing note.** No rollover is the right call and I would not change it: banked
+capacity creates a burst that looks like a pump and breaks the published schedule.
 
 ---
 
@@ -271,4 +270,4 @@ Format: **Context → Decision → Consequences → Alternatives rejected**. Sta
 | 013 | Plain non-upgradeable token | ACCEPTED |
 | 014 | Pinned dependency script | ACCEPTED |
 | 015 | Phase 1B deferred to Docker host | ACCEPTED |
-| D4 | Emission parameters | APPROVED (pending CI result) |
+| D4 | Emission parameters | APPROVED — 2 objections accepted, impl. Phase 2 |

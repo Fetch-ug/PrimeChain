@@ -219,7 +219,8 @@ If you want Prime to be the literal gas asset, say so now — Model B must be lo
 `RewardDistributor` holds no discretionary power beyond limits set on-chain (approved values in [DECISIONS.md](DECISIONS.md) D4):
 
 - `maxPerEpoch` — **500,000 PRIME/day**, hard cap, no rollover.
-- `maxPerAccountPerEpoch` — **200 PRIME/account/day**.
+- `MAX_EPOCH_CAP` — **2,000,000 PRIME**, `immutable`; no role (including the Timelock) can set `maxPerEpoch` above it, so the 1B ceiling cannot be drained in fewer than 500 epochs.
+- `maxPerAccountPerEpoch` — **200 PRIME/account/day**; allocations are computed server-side and the epoch merkle root is sealed after the cap is applied, so there is no claim-time race.
 - `epochDuration` — **1 day** (86,400 s), sealed epochs.
 - `totalReleased ≤ 1,000,000,000` — lifetime emissions ceiling; the other 1,000,000,000 stays in treasury as an unreleased reserve.
 - Unused epoch capacity **does not roll over** (prevents a burst that looks like a pump).

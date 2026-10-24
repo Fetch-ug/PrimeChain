@@ -38,7 +38,6 @@ contract PrimeTest is Test {
         assertEq(prime.name(), "Prime");
         assertEq(prime.symbol(), "PRIME");
         assertEq(prime.decimals(), 18);
-        assertEq(prime.TOTAL_SUPPLY(), TOTAL);
     }
 
     function test_GenesisMintsEntireSupplyToTreasury() public view {

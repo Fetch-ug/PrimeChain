@@ -24,6 +24,12 @@ contract PrimeInvariantTest is Test {
     address internal treasury;
     address[] internal actors;
 
+    /// @dev Local mirror of the genesis supply. `Prime.TOTAL_SUPPLY` is a
+    ///      `public constant` and is not reachable through the contract type;
+    ///      using a literal here also keeps the invariant independent of the
+    ///      contract it is testing (a contract cannot confirm its own constant).
+    uint256 internal constant TOTAL = 2_000_000_000e18;
+
     function setUp() public {
         treasury = makeAddr("treasury");
 
@@ -43,7 +49,7 @@ contract PrimeInvariantTest is Test {
     }
 
     function invariant_TotalSupplyIsConstant() public view {
-        assertEq(prime.totalSupply(), Prime.TOTAL_SUPPLY);
+        assertEq(prime.totalSupply(), TOTAL);
     }
 
     function invariant_BalancesSumToTotalSupply() public view {
@@ -58,12 +64,12 @@ contract PrimeInvariantTest is Test {
     }
 
     function invariant_NoBalanceExceedsTotalSupply() public view {
-        assertLe(prime.balanceOf(treasury), Prime.TOTAL_SUPPLY);
-        assertLe(prime.balanceOf(address(prime)), Prime.TOTAL_SUPPLY);
+        assertLe(prime.balanceOf(treasury), TOTAL);
+        assertLe(prime.balanceOf(address(prime)), TOTAL);
 
         uint256 count = handler.actorsLength();
         for (uint256 i; i < count; ++i) {
-            assertLe(prime.balanceOf(handler.actorAt(i)), Prime.TOTAL_SUPPLY);
+            assertLe(prime.balanceOf(handler.actorAt(i)), TOTAL);
         }
     }
 
