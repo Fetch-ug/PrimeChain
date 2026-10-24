@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Files that must be at 100% across every metric. Add treasury/reward files here
 # as they are implemented (Phase 2).
-REQUIRED_FILES: tuple[str, ...] = ("src/Prime.sol",)
+REQUIRED_FILES: tuple[str, ...] = ("src/Prime.sol", "src/RewardDistributor.sol")
 THRESHOLD: float = 100.0
 
 METRICS = (

@@ -3,7 +3,7 @@
 A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.md) and continue without re-deriving anything.
 
 **Current phase:** 1 — Local devnet + Prime token
-**Status:** 1A in CI round 2 — round 1: `secrets` ✅, `contracts` ❌ at `forge build` (fixed); 1B **blocked on a Docker host**
+**Status:** Phase 2 in progress — `RewardDistributor` + tests written, **awaiting CI**. Phase 1B open (rented server).
 **Last updated:** 2026-10-24
 
 ---
@@ -13,7 +13,8 @@ A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.m
 | Phase | Scope | Status | Gate |
 |---|---|---|---|
 | 0 | Architecture decision + threat model | ✅ approved 2026-10-24 | — |
-| 1 | Local devnet + Prime token | 🟡 1A packaged, awaiting CI / 1B blocked | CI result; Docker host for 1B |
+| 1 | Local devnet + Prime token | ✅ **1A done** (CI run #4) · ⬜ 1B open | rented server for 1B |
+| 2 | Game contracts | 🟡 `RewardDistributor` written, awaiting CI; 5 contracts not started | CI green before the rest |
 | 2 | Game contracts (items, crafting, market, storage, fees) | ⬜ not started | D2, D4 answered |
 | 3 | Paymaster, bundler, gateway | ⬜ not started | — |
 | 4 | Godot SDK + demo | ⬜ not started | D5 answered |
@@ -126,6 +127,24 @@ previous vacuity bug: the expectation was written for the common case only.
 
 **Awaiting:** run 4.
 
+### Run 4 — commit `de80f1b` — 2026-10-24 — ✅ **GREEN**
+
+Run: https://github.com/Fetch-ug/PrimeChain/actions/runs/40079845155
+
+| Workflow / job | Result |
+|---|---|
+| `secrets` | ✅ |
+| `contracts` → build / test / invariant / coverage | ✅ all steps passed |
+| → Enforce 100% coverage on token logic | ✅ passed (the gate is real, not decorative) |
+| `contracts` → deploy + RPC smoke (anvil) | ✅ passed |
+| `Format check (advisory in Phase 1)` | ⚠️ exited 1 — **advisory only**, `continue-on-error: true` |
+
+The job-level "exit code 1" annotation in the UI comes from the advisory format
+step; it does not fail the job and does not block. **Exactly one step in the whole
+pipeline is advisory** — every other step blocks (see the gate table below).
+
+**Phase 1A is complete.**
+
 
 
 | Artefact | Contents |
@@ -157,26 +176,76 @@ previous vacuity bug: the expectation was written for the common case only.
 | `.github/workflows/contracts.yml` | fmt → build → test → coverage gate; **anvil deploy + RPC smoke**; slither advisory until Phase 6 | ❌ never run |
 | `infra/devnet/{README,versions.env,devnet.sh,smoke.py}` | pinned runbook + real `eth_*` acceptance checks | ❌ never run |
 
-### Phase 1A acceptance criteria — actual status
+### Phase 1A acceptance criteria — final status
 
 | Criterion | Status |
 |---|---|
 | Token has no externally reachable mint path | ✅ by construction (single internal call in constructor) |
-| `forge build` green | ❌ run 1 failed (`Error 9582`, fixed) — awaiting run 2 |
-| `forge test` + invariants green | ⬜ never reached (build failed first) |
-| 100% coverage gate green | ⬜ never reached |
-| Devnet boots; `smoke.py` passes | ⬜ blocked — no Docker |
+| `forge build` green | ✅ run #4 |
+| `forge test` + invariants green | ✅ 16 unit/fuzz + 3 invariants (~130k transfer + ~130k transferFrom calls, 0 reverts) |
+| 100% coverage gate green | ✅ enforced and passed |
+| Deploy + RPC smoke (anvil) | ✅ passed — deploy, `totalSupply`, `balanceOf`, `decimals` over JSON-RPC |
+| **Real OP Stack devnet boots; `smoke.py` passes** | ⬜ **1B — open**, needs a rented Docker server |
 
-I am not marking those boxes. Only a CI run (or a machine with Foundry v1.8.6) can flip them, and per ADR-012 I will not claim a test result I have not seen.
+### Which CI gates actually block
 
-### Phase 1B blocker
+| Workflow | Step | Blocks the job? |
+|---|---|---|
+| `contracts` | bootstrap deps | ✅ yes |
+| `contracts` | **Format check** | ⚠️ **no** — `continue-on-error: true`, Phase 1 only |
+| `contracts` | build / test / coverage / 100% coverage gate | ✅ yes |
+| `contracts` | upload coverage artifact (`if: always()`) | n/a |
+| `contracts` → `deploy + RPC smoke` | every step, incl. `smoke.py` | ✅ yes |
+| `secrets` | `python3 scripts/scan_secrets.py` | ✅ yes |
+| `format` | all | n/a — manual `workflow_dispatch` only |
+| `_probe.yml` | all | n/a — git-ignored, excluded from the zip |
+
+**Exactly one advisory step exists in the whole pipeline.** When Phase 6 lands,
+`Format check` becomes blocking and Slither is added (pinned) as a second gate.
+
+### Phase 1 close-out
+
+**Proven (by execution, not by inspection):**
+
+- `Prime` compiles against OpenZeppelin v5.7.0 with solc 0.8.28 and deploys.
+- Supply is 2e27, entirely at the treasury, and no `mint`/`setTotalSupply`/`burn`
+  selector is callable on the deployed bytecode.
+- ERC-20 semantics behave (transfers, allowances, infinite allowance, self-transfer,
+  zero-address rejections) under 16 unit/fuzz tests.
+- The three supply invariants hold under stateful fuzzing with real token movement.
+- 100% line/function/branch coverage on `src/Prime.sol`, enforced by a gate that fails
+  the build.
+- Deployment to a live EVM node works end-to-end and the deployed values are readable
+  over plain `eth_call` (the same path the Godot client will use).
+- No credentials in the tree, checked on every push.
+
+**Not proven:**
+
+- **The OP Stack chain itself never ran.** No L1, no sequencer, no batcher, no replicas,
+  no bridge. `anvil` is a single EVM node and says nothing about OP Stack behaviour.
+- Blockscout, monitoring, and the devnet compose path are unexercised.
+- Gas costs, block cadence and data-availability cost on a real OP chain are unmeasured.
+- Nothing has been audited by a third party.
+
+**Known limitations:**
+
+- `Prime` is immutable: a bug requires a new token and a migration, by design.
+- No pause, no permit, no burn — deliberate (ADR-013), but it means a compromised
+  distributor cannot be stopped by pausing the token, only by pausing the distributor.
+- The format gate is advisory, so formatting drift is possible until Phase 6.
+- Creator/distributor of the token is a single deployment key; it receives nothing, but
+  the deployment transaction itself is not yet reproducible across machines.
+
+### Phase 1B blocker (open, not abandoned)
 
 The OP Stack devnet needs Docker and outbound image pulls, neither of which exists here. Additionally, the upstream `optimism` root `Makefile` at `op-node/v1.19.11` declares its own targets **deprecated** (`DEPRECATED_TARGETS`, `include ./justfiles/deprecated.mk`), so the old `make devnet-up` path is gone and the current path is `just` recipes. Rather than invent those recipe names, `infra/devnet/devnet.sh` is discovery-first: it clones the pinned tag, prints `just --list`, and `devnet.sh devnet` boots the **single** recipe matching `*devnet*` — refusing to guess if there is more than one.
 
-**I have no outbound network and no remote-execution tool, so I cannot drive an external Docker host or trigger GitHub Actions myself.** Closing 1B requires one of:
-
-1. **CI (preferred):** push this tree to a GitHub repo with Actions enabled. `contracts.yml` then runs build → test → invariant → coverage → **anvil deploy + RPC smoke** on its own, which proves the token and `smoke.py` without Docker.
-2. **Docker host:** copy the tree to a machine with Docker + internet and run `./infra/devnet/devnet.sh stack && ./infra/devnet/devnet.sh devnet`, then `smoke.py`. That is the only path that exercises the real OP Stack (L1, sequencer, batcher, replicas).
+**Plan (client decision, 2026-10-24): 1B is proven on a rented server before testnet.**
+CI covers the anvil smoke path; it cannot cover L1 + sequencer + batcher + replicas.
+When a Docker host exists, the sequence is: `./infra/devnet/devnet.sh stack` →
+`./infra/devnet/devnet.sh recipes` → resolve the `op-geth` pin → `./infra/devnet/devnet.sh devnet` →
+`python3 infra/devnet/smoke.py`, and the PASS/FAIL table is pasted into this file.
+Acceptance for 1B stays as written in [`infra/devnet/README.md`](infra/devnet/README.md).
 
 Send back the workflow run URL (or the `smoke.py` PASS/FAIL table) and I will record the result here.
 
@@ -265,6 +334,22 @@ Prepared for a machine with no Foundry and no Docker; CI is the only execution e
 
 
 
+## Known limitations (running list)
+
+1. **`Prime` is immutable.** A bug requires a new token and a migration. Deliberate (ADR-013).
+2. **No pause, no permit, no burn on the token.** A compromised distributor can only be
+   stopped at the distributor, not at the token.
+3. **Unclaimed sealed Prime is locked forever in V1.** The claim window is indefinite
+   (Q6), so an unclaimed allocation is not recoverable and not re-allocatable: it still
+   consumes `ALLOCATION` once sealed. Expiry is a **V2 design** and must not be bolted on.
+4. **The format gate is advisory** until Phase 6, so formatting drift is possible.
+5. **The OP Stack chain has never run.** Everything proven so far is single-node EVM
+   behaviour; 1B is open.
+6. **`RewardDistributor` allocates to one distributor per epoch scheme.** There is no
+   on-chain notion of "why" a player was rewarded — the merkle manifest is the record.
+
+
+
 ## Client decisions received
 
 **2026-10-24 — Phase 0 approved with recommended defaults.** Therefore:
@@ -283,14 +368,22 @@ Still outstanding before the phases that need them: **D6** (Safe signers, Phase 
 
 ## Next actions
 
-**To close Phase 1:**
-- [ ] Push to GitHub and run `contracts` workflow once; record run ID and result here
-- [ ] On a Docker host: `./infra/devnet/devnet.sh stack` → `recipes` → resolve op-geth pin → boot
-- [ ] Run `infra/devnet/smoke.py` and paste the PASS/FAIL table into this file
-- [ ] Deploy `Prime` to the devnet and confirm the treasury balance via `eth_call`
+**Phase 1A — closed 2026-10-24** (CI run #4 green)
 
-**Phase 2 (after Phase 1 sign-off):**
-- [ ] `Treasury` + `RewardDistributor` with on-chain epoch caps (needs D4)
-- [ ] `ItemRegistry` (ERC-1155, content hashes), `Crafting`, `Marketplace`, `Storage`, `FeeSink`
-- [ ] Safe 4/7 + `TimelockController` wiring and a deployment runbook
-- [ ] Storage-layout diff check in CI
+- [x] Push to GitHub and run `contracts` workflow; record run ID and result
+- [x] Build, unit/fuzz, invariants, 100% coverage gate, deploy + RPC smoke all green
+- [x] `secrets` green on every push
+
+**Phase 1B — open, to be proven on a rented server before testnet**
+
+- [ ] Provision a Docker host; `./infra/devnet/devnet.sh stack`
+- [ ] Resolve the `op-geth` pin in `infra/devnet/versions.env` (currently `TODO-`)
+- [ ] `./infra/devnet/devnet.sh devnet`, then `python3 infra/devnet/smoke.py`
+- [ ] Paste the PASS/FAIL table here; accept against `infra/devnet/README.md`
+
+**Phase 2 — plan written, awaiting approval**
+
+- [ ] Client answers Q1–Q7 in [PHASE2_PLAN.md](PHASE2_PLAN.md) §10
+- [ ] On approval: `RewardDistributor` first (it carries the money rules), then `FeeSink`,
+  `ItemRegistry`, `Storage`, `Crafting`, `Marketplace`
+- [ ] Add Slither (pinned, blocking) and storage-layout diff to CI before the first Phase 2 PR

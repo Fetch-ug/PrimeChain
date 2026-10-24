@@ -251,6 +251,83 @@ capacity creates a burst that looks like a pump and breaks the published schedul
 
 ---
 
+## Mainnet gates (hard — no mainnet launch until all are closed)
+
+1. **Independent third-party audit** of every contract and the deployment procedure.
+2. **`SEALER_ROLE` must be a multisig, not a single ops key.** Recorded 2026-10-24 (Q7):
+   a dedicated ops key is acceptable for testnet only; before mainnet the sealer must be
+   an M-of-N multisig with reconciliation alerts. A single key that can publish an epoch
+   root is a single point of economic failure.
+3. **Safe signers on hardware wallets**, geographically split, no shared cloud account.
+4. **`AUDIT_READINESS.md` complete** and the upgrade/incident runbooks drilled.
+5. **Slither pinned and blocking** in CI, plus a storage-layout diff per upgradeable contract.
+
+---
+
+## ADR-016 — Phase 2 decisions (Q1–Q4, Q6, Q7)
+
+**Status:** ACCEPTED BY CLIENT 2026-10-24 · **Date:** 2026-10-24
+
+| # | Decision | Consequence |
+|---|---|---|
+| Q1 | **Safe 4/7 is the treasury.** No custom `Treasury` contract. | Less code to audit; the emission rules live entirely in `RewardDistributor`. |
+| Q2 | **`RewardDistributor` is not upgradeable.** | The caps are a property of the deployed bytecode. A bug is fixed by deploying `V2` and having the Timelock move the remaining balance — slower, and that is the point. |
+| Q3 | **Marketplace is fixed-price only** in v1. | Roughly halves the state machine and audit surface; offers/auctions are a V2 conversation. |
+| Q4 | **`Storage` is an instance index, not a custody vault.** | ERC-1155 balances remain the single ownership ledger; avoids the two-sources-of-truth bug class. |
+| Q6 | **Claim window is indefinite.** | No expiry. Consequence recorded as a known limitation: unclaimed sealed Prime stays locked in V1 forever; expiry is a V2 design. |
+| Q7 | **Dedicated sealer ops key on testnet; multisig mandatory before mainnet.** | See Mainnet gate 2. |
+
+---
+
+## ADR-017 — The emissions ceiling is a constant; the allocation is an immutable parameter
+
+**Status:** ACCEPTED (implementation detail of D4) · **Date:** 2026-10-24
+
+**Context.** The approved design had `ALLOCATION` as a `uint256 constant` of 1e9. That makes
+the allocation-exhaustion guard impossible to test: exhausting 1e9 requires five million
+200-Prime claims, so the branch would never execute in CI and the guard would ship unproven.
+
+**Decision.** `EMISSIONS_CEILING = 1_000_000_000e18` is a `constant` (the promise). The
+contract stores an `immutable allocation` that must be `<= EMISSIONS_CEILING`. The deploy
+script asserts `allocation == 1e9`; tests deploy small allocations to exercise exhaustion.
+
+**Consequences.**
+- The 1B guarantee is unchanged: no deployment can ever hold an allocation above the ceiling,
+  and the value cannot change after construction.
+- The allocation-exhaustion path is now covered by tests instead of argued about.
+- One extra constructor argument; one extra deployment assertion.
+
+---
+
+## ADR-018 — Crafting fee: 0.5 PRIME flat per craft (proposed, awaiting confirmation)
+
+**Status:** PROPOSED — amount needs client sign-off · **Date:** 2026-10-24
+
+| Parameter | Value |
+|---|---|
+| `craftFee` | **0.5 PRIME** per craft action, flat |
+| `MAX_CRAFT_FEE` | 5 PRIME, immutable ceiling |
+| Change control | Timelock only, never above `MAX_CRAFT_FEE` |
+
+**Justification (numbers, not vibes).**
+- Per-account emission cap is 200 PRIME/day. At 0.5 PRIME/craft, a player can afford
+  **400 crafts/day** from a maxed account — the fee cannot gate normal play.
+- A typical session of 5–20 crafts costs **2.5–10 PRIME**, i.e. 1.25–5% of a maxed
+  account's daily income. A bot doing 10,000 crafts/day pays **5,000 PRIME**, which is a
+  genuine deterrent rather than a rounding error.
+- It is proportionate to the marketplace's 250 bps (2.5%): a 100 PRIME trade costs 2.5
+  PRIME, so a craft at 0.5 is roughly a fifth of a typical trade fee.
+- It is a **sink that scales with activity, not with wealth** — a whale crafting 10 items
+  pays the same as a new player crafting 10 items.
+- A flat fee is trivially auditable and displayable; percentage-of-value fees on crafting
+  would need a price reference we do not have.
+
+**Flagged consequence:** new players start with 0 PRIME and cannot craft until they earn.
+Either grant a small starter allocation from `RewardDistributor`, or exempt the first N
+crafts per account. Needs a product decision before Phase 2 ships `Crafting`.
+
+---
+
 ## Decision index
 
 | ADR | Topic | Status |
@@ -271,3 +348,6 @@ capacity creates a burst that looks like a pump and breaks the published schedul
 | 014 | Pinned dependency script | ACCEPTED |
 | 015 | Phase 1B deferred to Docker host | ACCEPTED |
 | D4 | Emission parameters | APPROVED — 2 objections accepted, impl. Phase 2 |
+| 016 | Phase 2 decisions (Q1–Q4, Q6, Q7) | ACCEPTED |
+| 017 | Ceiling constant + immutable allocation | ACCEPTED |
+| 018 | Crafting fee 0.5 PRIME flat | PROPOSED (needs sign-off) |
