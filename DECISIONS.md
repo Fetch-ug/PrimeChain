@@ -334,7 +334,7 @@ recipe inputs, which are themselves obtained through play.
 
 ## ADR-019 — Game contracts are non-upgradeable in v1 (deviation, needs a decision)
 
-**Status:** **PROPOSED — needs a client decision before Crafting/Marketplace** · **Date:** 2026-10-24
+**Status:** **ACCEPTED BY CLIENT 2026-10-24 — option (a), all game contracts immutable** · **Date:** 2026-10-24
 
 **Context.** PHASE2_PLAN §2 specified the game contracts as UUPS-upgradeable behind the
 Timelock. While implementing `ItemRegistry` I found that this is not safe with the
@@ -348,33 +348,86 @@ dependency we actually vendor:
    A proxy over these contracts would start with an empty URI and no admin, or worse,
    would silently diverge from the implementation's state.
 
-**Decision.** `ItemRegistry` is written **non-upgradeable** (constructor, immutable
-algebra). Token and distributor are already non-upgradeable, so this is consistent.
+**Decision.** **Option (a): every game contract is non-upgradeable. No proxies.** `ItemRegistry`
+ships with a constructor and immutable algebra; the same rule applies to `Crafting`,
+`Marketplace`, `Storage` and `FeeSink`. Token and distributor were already immutable, so the
+whole system now shares one trust model.
+
+**Why (client's reasoning, recorded verbatim in substance).**
+1. **There is no multisig signer set yet.** An upgrade authority would have to sit with a
+   single key or a group that does not exist, which is precisely the single-key-admin
+   pattern the brief forbids.
+2. **An upgrade key would be the most powerful key in the system.** It could replace the
+   logic of any game contract — more powerful than the sealer, more powerful than the
+   pause role, more powerful than the Safe itself, because it needs no timelock to be
+   *effective* once exercised. Adding it would undo the "no single-key admin" property.
+3. **Consistency.** `Prime` and `RewardDistributor` are immutable; a mixed model forces
+   users and auditors to hold two different trust assumptions about the same economy.
 
 **Consequences.**
-- `ItemRegistry` can still evolve *metadata* (URI via `REGISTRAR_ROLE`, with an event);
-  it can never change a content hash or a supply cap. Those are the economic promises.
-- Changing the *schema* (new fields, new rules) means deploying a new registry and
-  migrating. Item balances live on the old contract, so migration needs a burn/mint
-  bridge with cap headroom — workable but not free.
-- If we later want upgradeable game contracts, we must vendor
-  `@openzeppelin/contracts-upgradeable@v5.7.0` (a second pinned dependency), use
-  `Initializable` + `__ERC1155_init`, add storage gaps, and add a storage-layout diff to
-  CI. That is a deliberate, testable change — not something to slip in mid-contract.
-
-**Recommendation.** Decide now, because `ItemRegistry` is not yet deployed and is
-therefore still free to change:
-- **(a) All game contracts immutable** — simplest, most auditable, matches the token and
-  distributor; schema changes require migration.
-- **(b) Vendor the upgradeable package** — keep token/distributor immutable, make
-  `ItemRegistry`/`Crafting`/`Marketplace`/`Storage` proxies behind the Timelock.
-
-I lean (b) for the stateful game contracts, because item balances and listings are exactly
-the state that is expensive to migrate. But I will not add a dependency and a proxy
-pattern without your sign-off.
+- `ItemRegistry` can still evolve *metadata* (URI via `REGISTRAR_ROLE`, with an event); it
+  can never change a content hash or a supply cap. Those are the economic promises.
+- Changing the *schema* means deploying a V2 and migrating balances. That is now a
+  planned, documented operation, not an outage: see [MIGRATION.md](MIGRATION.md).
+- Upgradeability may be reconsidered **only as a pre-mainnet decision**, never
+  contract-by-contract mid-phase, and never after deployment of the affected contract.
 
 **Rejected.** Proxying the base `ERC1155`/`AccessControl` as-is (silently unsafe).
 Leaving the question open until after deployment (then it is permanent).
+
+---
+
+## ADR-020 — One-way freeze on ItemRegistry (migration tool)
+
+**Status:** **ACCEPTED BY CLIENT 2026-10-24** — implementation starts **only after `ItemRegistry` is green in CI**, and must land before deployment. · **Date:** 2026-10-24
+
+**Context.** ADR-019 makes every game contract immutable, so replacing `ItemRegistry` means a
+snapshot-based migration ([MIGRATION.md](MIGRATION.md)). A snapshot is only meaningful if the
+balance set stops changing. Without a freeze, migration depends on a coordinated marketplace
+shutdown, and any post-snapshot P2P transfer is silently unhonoured.
+
+**Decision.** Add `freeze()` to `ItemRegistry`:
+
+```solidity
+bool public frozen;
+event Frozen(address indexed account);
+error AlreadyFrozen();
+error ContractFrozen();
+
+function freeze() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (frozen) revert AlreadyFrozen();
+    frozen = true;
+    emit Frozen(msg.sender);
+}
+
+function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
+    internal override(ERC1155, ERC1155Supply)
+{
+    if (frozen) revert ContractFrozen();
+    super._update(from, to, ids, values);
+}
+```
+
+**Constraints (each becomes a test).**
+1. Callable **only** by `DEFAULT_ADMIN_ROLE` — the Timelock. Not `REGISTRAR_ROLE`, not
+   `MODULE_ROLE`, not any ops key. Negative tests for each of the three, plus a positive
+   control for the admin.
+2. **One-way.** No `unfreeze()`. A second `freeze()` reverts `AlreadyFrozen`.
+3. **Blocks mint and transfer.**
+4. **Also blocks burn** — deliberate refinement of the client's wording. `_update` is the
+   single choke point, and a MODULE burn after the snapshot would silently change a player's
+   recorded balance. If burns must stay possible while frozen, that is a one-line change
+   (permit `to == address(0)`); flagged rather than assumed.
+5. **The function can never move, burn or reassign anything.** It takes no arguments and
+   touches no balance. Proven by asserting every tracked balance and `totalSupply` are
+   unchanged across the call.
+6. Emits `Frozen(address indexed account)`.
+7. **Metadata URI stays mutable** — URIs are not balances, and moving a CDN mid-migration is
+   legitimate (it emits `MetadataURIUpdated`).
+
+**Consequences.** Worst case, the Timelock can halt trading permanently — griefing, not
+theft, and it is the slowest authority in the system. After deployment this becomes the only
+way to make a snapshot atomic, so it ships **before** deployment or not at all.
 
 ---
 
@@ -401,4 +454,5 @@ Leaving the question open until after deployment (then it is permanent).
 | 016 | Phase 2 decisions (Q1–Q4, Q6, Q7) | ACCEPTED |
 | 017 | Ceiling constant + immutable allocation | ACCEPTED |
 | 018 | Crafting fee 0.5 PRIME flat + first 5 crafts free | ACCEPTED |
-| 019 | Game contracts non-upgradeable in v1 | PROPOSED (needs decision) |
+| 019 | All game contracts immutable, no proxies | ACCEPTED (option a) |
+| 020 | One-way freeze on ItemRegistry | ACCEPTED (impl. after green) |

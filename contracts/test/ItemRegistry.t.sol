@@ -131,7 +131,15 @@ contract ItemRegistryTest is Test {
     }
 
     function test_UriFallsBackToBaseForUnknownItem() public view {
-        assertEq(registry.uri(1234), string.concat("ipfs://base/", "1234"));
+        // OZ v5.7.0 `ERC1155.uri(uint256)` ignores the id and returns `_uri` verbatim:
+        //
+        //     function uri(uint256 /* id */) public view virtual returns (string memory) {
+        //         return _uri;
+        //     }
+        //
+        // The `{id}` substitution is the CLIENT's job per EIP-1155, so the fallback is
+        // the base URI unchanged — not base + id.
+        assertEq(registry.uri(1234), "ipfs://base/");
     }
 
     // ---------------------------------------------------------------------

@@ -3,7 +3,7 @@
 A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.md) and continue without re-deriving anything.
 
 **Current phase:** 1 — Local devnet + Prime token
-**Status:** Phase 2 in progress — `RewardDistributor` ✅ **proven by CI run #7**; `ItemRegistry` written, awaiting CI. Phase 1B open (rented server).
+**Status:** Phase 2 — `RewardDistributor` ✅ CI #7. `ItemRegistry`: run #8 **failed on one test** (OZ `uri()` semantics), fix applied, awaiting run #9. Freeze (ADR-020) approved but **not written** until ItemRegistry is green.
 **Last updated:** 2026-10-24
 
 ---
@@ -188,9 +188,59 @@ per-run guard fired on every sequence, 37 unit/fuzz tests passed, and branch cov
 `src/RewardDistributor.sol` is 100%. The three earlier failures (prank consumption ×3,
 target-set leak, vacuous fixture) are all closed.
 
+### Run 8 — commit `1fa3eaa` — Phase 2, ItemRegistry — ❌ failed (tests)
+
+URL: https://github.com/Fetch-ug/PrimeChain/actions/runs/40084823595
+
+| Step | Result |
+|---|---|
+| Install deps / build | ✅ |
+| Format check (advisory) | ✅ — the tree is now **fmt-clean**; the advisory gate passes |
+| Unit, fuzz and invariant tests | ❌ |
+| Coverage + 100% gate | skipped |
+| deploy + RPC smoke | skipped |
+| `secrets` | ✅ |
+
+**Cause.** `test_UriFallsBackToBaseForUnknownItem` asserted `uri(1234) == "ipfs://base/1234"`.
+OZ v5.7.0 `ERC1155.uri(uint256 /* id */)` returns `_uri` **verbatim** — the `{id}`
+substitution is the client's job per EIP-1155. Verified against the v5.7.0 source rather than
+inferred from the failure.
+
+**Fix.** The test now asserts the base URI unchanged, with the OZ semantics quoted in a
+comment.
+
+**Caveat, stated plainly.** The job log endpoint requires admin rights (`403 Must have admin
+rights to Repository`), so I could not read the assertion text. This diagnosis rests on the
+failing step plus source verification. If run #9 fails with a *different* error, that one is
+still undiagnosed and I will need the log excerpt.
+
+### Post-#8 decisions
+
+- **ADR-020 accepted:** one-way `freeze()` on `ItemRegistry`, callable only by the
+  Timelock-controlled admin role, emitting `Frozen`. **Not written yet** — held until
+  ItemRegistry is green, per instruction.
+- [MIGRATION.md](MIGRATION.md) §4 updated from "open decision" to the accepted constraints.
+- One refinement flagged to the client: the freeze also blocks **burn** (not only mint and
+  transfer), because a MODULE burn after the snapshot would silently change a player's
+  balance. One-line change if they want burns to remain possible while frozen.
 
 
-| Artefact | Contents |
+
+### ADR-019 decision — recorded between runs 7 and 8
+
+Client chose **option (a): all game contracts immutable, no proxies**, for three reasons:
+no multisig signer set exists yet; an upgrade key would be the most powerful key in the
+system (no timelock needed to be effective); and consistency with `Prime` and
+`RewardDistributor`. Upgradeability may be reconsidered **only as a pre-mainnet decision**.
+
+Consequence recorded and mitigated: schema changes become migrations, documented in
+[MIGRATION.md](MIGRATION.md) (snapshot → merkle claim → V2 re-issue, with reconciliation and
+abort conditions). **Open item:** `ItemRegistry` as written has no `freeze()`, and MIGRATION
+§4 recommends adding a one-way freeze *before deployment* so the snapshot can be atomic.
+That is a decision for the next contract change, not a defect in the current one.
+
+---
+
 ## Phase 0 — what was produced
 
 | Artefact | Contents |
