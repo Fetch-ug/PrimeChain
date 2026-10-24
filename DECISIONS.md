@@ -332,6 +332,52 @@ recipe inputs, which are themselves obtained through play.
 
 ---
 
+## ADR-019 — Game contracts are non-upgradeable in v1 (deviation, needs a decision)
+
+**Status:** **PROPOSED — needs a client decision before Crafting/Marketplace** · **Date:** 2026-10-24
+
+**Context.** PHASE2_PLAN §2 specified the game contracts as UUPS-upgradeable behind the
+Timelock. While implementing `ItemRegistry` I found that this is not safe with the
+dependency we actually vendor:
+
+1. **The upgradeable package is not vendored.** `bootstrap-deps.sh` pins
+   `openzeppelin-contracts` (not `openzeppelin-contracts-upgradeable`).
+2. **The base package cannot be proxied safely here.** `ERC1155`'s constructor writes
+   `_uri` to storage, and `AccessControl`'s constructor writes `_roles`. Constructors do
+   not run in the proxy's context, and the base package exposes no `__ERC1155_init`.
+   A proxy over these contracts would start with an empty URI and no admin, or worse,
+   would silently diverge from the implementation's state.
+
+**Decision.** `ItemRegistry` is written **non-upgradeable** (constructor, immutable
+algebra). Token and distributor are already non-upgradeable, so this is consistent.
+
+**Consequences.**
+- `ItemRegistry` can still evolve *metadata* (URI via `REGISTRAR_ROLE`, with an event);
+  it can never change a content hash or a supply cap. Those are the economic promises.
+- Changing the *schema* (new fields, new rules) means deploying a new registry and
+  migrating. Item balances live on the old contract, so migration needs a burn/mint
+  bridge with cap headroom — workable but not free.
+- If we later want upgradeable game contracts, we must vendor
+  `@openzeppelin/contracts-upgradeable@v5.7.0` (a second pinned dependency), use
+  `Initializable` + `__ERC1155_init`, add storage gaps, and add a storage-layout diff to
+  CI. That is a deliberate, testable change — not something to slip in mid-contract.
+
+**Recommendation.** Decide now, because `ItemRegistry` is not yet deployed and is
+therefore still free to change:
+- **(a) All game contracts immutable** — simplest, most auditable, matches the token and
+  distributor; schema changes require migration.
+- **(b) Vendor the upgradeable package** — keep token/distributor immutable, make
+  `ItemRegistry`/`Crafting`/`Marketplace`/`Storage` proxies behind the Timelock.
+
+I lean (b) for the stateful game contracts, because item balances and listings are exactly
+the state that is expensive to migrate. But I will not add a dependency and a proxy
+pattern without your sign-off.
+
+**Rejected.** Proxying the base `ERC1155`/`AccessControl` as-is (silently unsafe).
+Leaving the question open until after deployment (then it is permanent).
+
+---
+
 ## Decision index
 
 | ADR | Topic | Status |
@@ -354,4 +400,5 @@ recipe inputs, which are themselves obtained through play.
 | D4 | Emission parameters | APPROVED — 2 objections accepted, impl. Phase 2 |
 | 016 | Phase 2 decisions (Q1–Q4, Q6, Q7) | ACCEPTED |
 | 017 | Ceiling constant + immutable allocation | ACCEPTED |
-| 018 | Crafting fee 0.5 PRIME flat | PROPOSED (needs sign-off) |
+| 018 | Crafting fee 0.5 PRIME flat + first 5 crafts free | ACCEPTED |
+| 019 | Game contracts non-upgradeable in v1 | PROPOSED (needs decision) |

@@ -141,10 +141,40 @@ jobs:
           print("prime=" + addrs[-1])
           PY
 
+      - name: Deploy RewardDistributor (script asserts allocation == 1e9)
+        env:
+          PRIME_ADDRESS: ${{ steps.addr.outputs.prime }}
+          DISTRIBUTOR_ADMIN: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+          DISTRIBUTOR_SEALER: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+          DISTRIBUTOR_CONFIG: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+          DISTRIBUTOR_PAUSER: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+        run: |
+          forge script script/DeployRewardDistributor.s.sol:DeployRewardDistributor \
+            --rpc-url http://127.0.0.1:8545 \
+            --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+            --broadcast
+
+      - name: Resolve distributor address
+        id: dist
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import glob, json
+          files = sorted(glob.glob("broadcast/DeployRewardDistributor.s.sol/*/run-latest.json"))
+          if not files:
+              raise SystemExit("no broadcast artifact for DeployRewardDistributor")
+          data = json.load(open(files[-1]))
+          addrs = [t.get("contractAddress") for t in data.get("transactions", []) if t.get("contractAddress")]
+          if not addrs:
+              raise SystemExit("broadcast artifact has no contractAddress")
+          print("distributor=" + addrs[-1])
+          PY
+
       - name: RPC acceptance checks
         env:
           PRIME_ADDRESS: ${{ steps.addr.outputs.prime }}
           PRIME_TREASURY: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+          REWARD_DISTRIBUTOR: ${{ steps.dist.outputs.distributor }}
           CHAIN_ID: "20260"
         run: python3 ../infra/devnet/smoke.py http://127.0.0.1:8545
 

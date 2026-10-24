@@ -101,7 +101,19 @@ def main(argv: list[str]) -> int:
     decimals = eth_call(url, prime, SEL_DECIMALS)
     check("decimals == 18", decimals == 18, f"got {decimals}")
 
-    # 5. Replica consistency (same height, same hash)
+    # 5. Optional: the emission distributor is deployed (bytecode present).
+    #    The allocation value itself is asserted by DeployRewardDistributor.s.sol,
+    #    which the deploy-smoke job runs; this check proves the deployment landed.
+    distributor = os.environ.get("REWARD_DISTRIBUTOR", "")
+    if distributor:
+        distributor_code = rpc(url, "eth_getCode", [distributor, "latest"])
+        check(
+            "RewardDistributor has bytecode",
+            distributor_code not in ("0x", "0x0", ""),
+            f"got {distributor_code[:10]}…",
+        )
+
+    # 6. Replica consistency (same height, same hash)
     replicas = os.environ.get("L2_REPLICA_RPC_URLS", "").split()
     for replica in replicas:
         try:

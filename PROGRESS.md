@@ -3,7 +3,7 @@
 A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.md) and continue without re-deriving anything.
 
 **Current phase:** 1 — Local devnet + Prime token
-**Status:** Phase 2 in progress — `RewardDistributor` + tests written, **awaiting CI**. Phase 1B open (rented server).
+**Status:** Phase 2 in progress — `RewardDistributor` ✅ **proven by CI run #7**; `ItemRegistry` written, awaiting CI. Phase 1B open (rented server).
 **Last updated:** 2026-10-24
 
 ---
@@ -14,7 +14,7 @@ A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.m
 |---|---|---|---|
 | 0 | Architecture decision + threat model | ✅ approved 2026-10-24 | — |
 | 1 | Local devnet + Prime token | ✅ **1A done** (CI run #4) · ⬜ 1B open | rented server for 1B |
-| 2 | Game contracts | 🟡 `RewardDistributor` written, awaiting CI; 5 contracts not started | CI green before the rest |
+| 2 | Game contracts | 🟡 distributor ✅ CI #7 · ItemRegistry awaiting CI · 4 contracts not started | CI green before the rest |
 | 2 | Game contracts (items, crafting, market, storage, fees) | ⬜ not started | D2, D4 answered |
 | 3 | Paymaster, bundler, gateway | ⬜ not started | — |
 | 4 | Godot SDK + demo | ⬜ not started | D5 answered |
@@ -170,6 +170,23 @@ coverage and deploy-smoke did not run.
 **Expected in run 7:** the call table lists only `DistributorHandler.seal`,
 `DistributorHandler.claimA`, `DistributorHandler.claimB`. Anything else means the
 restriction is still not in force.
+
+### Run 7 — commit `9e287f3` — Phase 2, distributor — ✅ **GREEN**
+
+`contracts` passed in 2m27s, `secrets` passed. (The contracts run URL was not included
+in the hand-off; run number and commit are recorded here.)
+
+| Gate | Result |
+|---|---|
+| build / unit / fuzz / invariants | ✅ all 54 tests |
+| 100% coverage gate (Prime + RewardDistributor) | ✅ enforced and passed |
+| deploy + RPC smoke (anvil) | ✅ |
+| secrets | ✅ |
+
+**`RewardDistributor` is proven by CI.** I1–I4 held with the vacuity guard active, the
+per-run guard fired on every sequence, 37 unit/fuzz tests passed, and branch coverage on
+`src/RewardDistributor.sol` is 100%. The three earlier failures (prank consumption ×3,
+target-set leak, vacuous fixture) are all closed.
 
 
 
