@@ -1,0 +1,60 @@
+name: format
+
+# Manual, opt-in auto-formatter.
+#
+# Why this exists: the authoring machine had no Foundry, so the Solidity was
+# written without `forge fmt`. If the "Format check" step in the contracts
+# workflow reports differences, run this workflow from the Actions tab and it
+# will commit the formatting fix for you — no local toolchain required.
+#
+# It is workflow_dispatch only on purpose: an automatic formatter commit on
+# every push would rewrite history while you are reading a failure log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to format and commit to"
+        required: true
+        default: "main"
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    name: forge fmt + commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Foundry (pinned)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.6
+
+      - name: Install pinned dependencies
+        run: bash scripts/bootstrap-deps.sh
+
+      - name: Format
+        run: forge fmt src test script
+
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          git config user.name  "primechain-format-bot"
+          git config user.email "format-bot@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "already formatted; nothing to commit"
+            exit 0
+          fi
+          git add -A
+          git commit -m "style: forge fmt (automated)"
+          git push

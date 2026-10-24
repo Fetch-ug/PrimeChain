@@ -1,0 +1,39 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+
+# Pinned toolchain (ARCHITECTURE.md §15, ADR-011). Do not use floating versions.
+solc_version = "0.8.28"
+evm_version = "cancun"
+
+optimizer = true
+optimizer_runs = 200
+
+# Reproducible bytecode: no metadata hash, no CBOR trailer.
+# Deploying anything else makes "verify the audited bytecode" impossible.
+bytecode_hash = "none"
+cbor_metadata = false
+
+# Stronger than the defaults so CI actually explores state space.
+fuzz = { runs = 1000 }
+invariant = { runs = 512, depth = 64, fail_on_revert = true }
+
+[profile.ci]
+fuzz = { runs = 5000 }
+invariant = { runs = 2048, depth = 128, fail_on_revert = true }
+
+# Coverage runs the suite under instrumentation, which is roughly an order of
+# magnitude slower. Keep the search space small here: the 100% coverage target is
+# about which lines execute, not about fuzz depth (that is what profile.ci is for).
+[profile.coverage]
+fuzz = { runs = 200 }
+invariant = { runs = 64, depth = 16, fail_on_revert = true }
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = true
+int_types = "long"

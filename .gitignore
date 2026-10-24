@@ -1,0 +1,78 @@
+# --- secrets & keys (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+keystore/
+secrets/
+private-keys*
+mnemonic*
+
+# --- Foundry ---
+contracts/lib/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/cache_forge/
+contracts/crytic-export/
+lcov.info
+coverage/
+*.gas-snapshot.tmp
+
+# --- devnet checkout (cloned upstream optimism tree) ---
+infra/devnet/_stack/
+
+# --- Node / pnpm ---
+node_modules/
+.pnpm-store/
+dist/
+build/
+.tsbuildinfo
+
+# --- Python (offline reference tooling) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- Godot ---
+.godot/
+godot/.import/
+*.translation
+export_presets.cfg
+android/build/
+ios/build/
+
+# --- native build artefacts (GDExtension) ---
+*.o
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+*.pdb
+!godot/addons/**/bin/**/keep.me
+
+# --- infra runtime ---
+infra/**/data/
+infra/**/volumes/
+*.log
+logs/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- local notes that must not ship ---
+NOTES.local.md
+
+# --- harness / local scratch (never part of the project) ---
+.dsh/
+.github/workflows/_probe.yml
+_delete_probe.txt

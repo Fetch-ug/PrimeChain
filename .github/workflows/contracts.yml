@@ -1,0 +1,153 @@
+name: contracts
+
+on:
+  push:
+    paths:
+      - "contracts/**"
+      - "infra/devnet/**"
+      - "scripts/**"
+      - ".github/workflows/contracts.yml"
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "infra/devnet/**"
+      - "scripts/**"
+      - ".github/workflows/contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  build-and-test:
+    name: build / test / invariant / coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry (pinned)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.6
+
+      - name: Show toolchain
+        run: forge --version
+
+      - name: Install pinned dependencies
+        run: bash scripts/bootstrap-deps.sh
+
+      # Phase 1: advisory. The authoring environment had no formatter, so the
+      # first run is expected to report style differences. Phase 6 makes this
+      # blocking. Use the "format" workflow (workflow_dispatch) to fix it
+      # without a local Foundry install.
+      - name: Format check (advisory in Phase 1)
+        continue-on-error: true
+        run: forge fmt --check src test script
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Unit, fuzz and invariant tests
+        run: forge test -vvv
+
+      # Coverage uses the cheap profile: instrumentation plus 2048 invariant
+      # runs would take long enough to risk the job timeout.
+      - name: Coverage
+        env:
+          FOUNDRY_PROFILE: coverage
+        run: forge coverage --report lcov
+
+      - name: Enforce 100% coverage on token logic
+        run: python3 scripts/check_coverage.py lcov.info
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-report
+          path: contracts/lcov.info
+          if-no-files-found: warn
+
+  deploy-smoke:
+    # Proves the deploy path and the RPC reads end-to-end without Docker.
+    # This is NOT the OP Stack devnet: anvil is a single EVM node with no L1,
+    # no batcher and no replicas. It validates the token + smoke.py only.
+    name: deploy + RPC smoke (anvil)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-and-test
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry (pinned)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.6
+
+      - name: Install pinned dependencies
+        run: bash scripts/bootstrap-deps.sh
+
+      - name: Start anvil
+        run: |
+          set -euo pipefail
+          nohup anvil --block-time 2 --chain-id 20260 --port 8545 > anvil.log 2>&1 &
+          ready=0
+          for _ in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "anvil did not become ready; log follows:" >&2
+            cat anvil.log >&2
+            exit 1
+          fi
+          cast chain-id --rpc-url http://127.0.0.1:8545
+
+      - name: Deploy Prime
+        # Anvil's publicly documented development key (account #0). It is
+        # worthless and exists only on this ephemeral CI chain. Never use it for
+        # anything real; no production key may ever appear in this repo.
+        env:
+          PRIME_TREASURY: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+        run: |
+          forge script script/DeployPrime.s.sol:DeployPrime \
+            --rpc-url http://127.0.0.1:8545 \
+            --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+            --broadcast
+
+      - name: Resolve deployed address
+        id: addr
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import glob, json
+          files = sorted(glob.glob("broadcast/DeployPrime.s.sol/*/run-latest.json"))
+          if not files:
+              raise SystemExit("no broadcast artifact under broadcast/DeployPrime.s.sol/*/run-latest.json")
+          data = json.load(open(files[-1]))
+          addrs = [t.get("contractAddress") for t in data.get("transactions", []) if t.get("contractAddress")]
+          if not addrs:
+              raise SystemExit("broadcast artifact has no contractAddress")
+          print("prime=" + addrs[-1])
+          PY
+
+      - name: RPC acceptance checks
+        env:
+          PRIME_ADDRESS: ${{ steps.addr.outputs.prime }}
+          PRIME_TREASURY: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+          CHAIN_ID: "20260"
+        run: python3 ../infra/devnet/smoke.py http://127.0.0.1:8545
+
+      - name: Dump anvil log on failure
+        if: failure()
+        run: tail -n 100 anvil.log || true
