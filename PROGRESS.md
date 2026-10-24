@@ -158,6 +158,19 @@ pipeline is advisory** — every other step blocks (see the gate table below).
 where nothing happened, so they were **unproven** until the guard went green. They are not
 claimed as passing.
 
+### Run 6 — commit `d463e59` — Phase 2, distributor — 2026-10-24
+
+`secrets` ✅ · build ✅ · unit tests ✅ (only the 4 invariants failed) · invariants ❌ ·
+coverage and deploy-smoke did not run.
+
+| Failure | Cause | Fix |
+|---|---|---|
+| All 4 distributor invariants: `ERC20InsufficientAllowance(0x8A99…938f, 0, 792)` | The call table listed only `Prime.transferFrom`. Run 5 removed `targetContract(address(handler))` on the (wrong) theory that it broadened the target set. It is the opposite: **without it, Foundry auto-targets every contract deployed in `setUp`**, so the token's own `transferFrom` became a fuzz target and `fail_on_revert` killed each run at the first call. | `targetContract(address(handler))` restored, plus `excludeContract` for `Prime` and the distributor, plus `targetSelector` limited to seal/claimA/claimB. |
+
+**Expected in run 7:** the call table lists only `DistributorHandler.seal`,
+`DistributorHandler.claimA`, `DistributorHandler.claimB`. Anything else means the
+restriction is still not in force.
+
 
 
 | Artefact | Contents |

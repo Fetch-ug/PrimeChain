@@ -55,10 +55,23 @@ contract RewardDistributorInvariantTest is Test {
         // The handler is the sealer for this suite; it still cannot exceed the caps.
         dist.grantRole(dist.SEALER_ROLE(), address(handler));
 
-        // Only these three selectors are targeted. `targetContract` is deliberately
-        // NOT used as well: it would target every public function, including view
-        // getters, and the sequence could then spend its whole budget on calls that
-        // cannot seal or claim — which is exactly how the vacuity guard failed.
+        // Restrict the fuzz target set EXPLICITLY. Without `targetContract`, Foundry
+        // auto-targets every contract deployed in setUp — that is how `Prime.transferFrom`
+        // ended up in the call table and its first revert (ERC20InsufficientAllowance)
+        // killed each run before the handler was ever reached.
+        //
+        //   targetContract(handler)  -> only the handler may be called
+        //   excludeContract(...)     -> belt and braces for the contracts we deployed
+        //   targetSelector(...)      -> only these three functions of the handler
+        //
+        // `advance` is intentionally not targeted: time is advanced inside
+        // `_prepareEpoch` when a seal or claim needs it. A run consisting only of
+        // `advance` calls could not seal or claim, which would make the per-run vacuity
+        // guard unsatisfiable.
+        targetContract(address(handler));
+        excludeContract(address(prime));
+        excludeContract(address(dist));
+
         bytes4[] memory selectors = new bytes4[](3);
         selectors[0] = DistributorHandler.seal.selector;
         selectors[1] = DistributorHandler.claimA.selector;
