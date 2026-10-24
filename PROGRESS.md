@@ -88,6 +88,44 @@ handler revert would fail the run rather than be silently swallowed.
 
 **Awaiting:** run 3.
 
+### Run 3 — commit `1778bb9` — 2026-10-24
+
+| Workflow | Result | Detail |
+|---|---|---|
+| `secrets` | ✅ passed | |
+| `contracts` → build | ✅ passed | |
+| `contracts` → invariant suite | ✅ passed | 3 invariants, **~130k transfer + ~130k transferFrom calls, 0 reverts** — the fixture fix worked and the suite is no longer vacuous |
+| `contracts` → unit/fuzz | ❌ 1 failure | `testFuzz_TransfersPreserveSupply`, run 131: counterexample `amount=750e18`, `recipient=treasury` → `2000000750…e18 != 2000000000…e18` |
+
+**Root cause (test, not token).** The test asserted `balanceOf(treasury) + amount == TOTAL`,
+which assumes the recipient is not the treasury. When `from == to` the token correctly
+does nothing (OZ `_update` decrements then re-increments the same slot) but the
+assertion adds `amount` that never left. Classic double-count, same family as the
+previous vacuity bug: the expectation was written for the common case only.
+
+**Fix (one file).** Branch on `recipient == treasury`:
+* self-transfer → assert the treasury balance is **unchanged** (and the token still
+  emits `Transfer`, which `test_SelfTransferIsNoOp` pins down separately);
+* otherwise → assert the exact sender/recipient deltas and that the pair sums to the
+  pre-transfer balance;
+* the pair-sum assertion lives **inside** the `else` — summing the same account twice
+  would double-count it, which is the very mistake being fixed.
+
+**Verified against the failing seed by hand:** `amount=750e18`, `recipient=treasury`,
+`treasuryBefore=2e27` → `_update` sets `2e27-750e18` then `+750e18` → `2e27`;
+`totalSupply` unchanged; self-branch passes.
+
+**Same-pattern audit.**
+* `testFuzz_TotalSupplyCannotBeInflated` — no from/to pair, unaffected.
+* `PrimeHandler.transfer` — `from == to` is legal: `transfer(self, amount)` nets to zero,
+  emits an event, increments the counter; no assertion assumes distinctness.
+* `PrimeHandler.transferFrom` — `owner == spender == to` is the harshest overlap: it sets
+  a self-allowance of exactly `amount`, then `_spendAllowance` decrements it to zero while
+  the balance nets to zero. No revert, and the sum invariant is unaffected.
+* Coverage: self-transfer is now exercised in the unit suite *and* under stateful fuzz.
+
+**Awaiting:** run 4.
+
 
 
 | Artefact | Contents |

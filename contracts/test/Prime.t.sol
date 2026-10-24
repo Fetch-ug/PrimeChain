@@ -185,10 +185,27 @@ contract PrimeTest is Test {
         vm.assume(recipient != address(0));
         amount = bound(amount, 0, prime.balanceOf(treasury));
 
+        uint256 treasuryBefore = prime.balanceOf(treasury);
+
         vm.prank(treasury);
         prime.transfer(recipient, amount);
 
         assertEq(prime.totalSupply(), TOTAL);
-        assertEq(prime.balanceOf(treasury) + amount, TOTAL);
+
+        if (recipient == treasury) {
+            // Self-transfer: OZ's `_update` decrements and re-increments the same
+            // slot, so nothing moves and the Transfer event is still emitted.
+            // Writing the expectation as `treasuryBefore + amount == TOTAL` was
+            // the original bug: it double-counts, because the treasury is both
+            // sender and recipient. Fuzzed counterexample: amount=750e18,
+            // recipient=treasury.
+            assertEq(prime.balanceOf(treasury), treasuryBefore, "self-transfer must not change balance");
+        } else {
+            assertEq(prime.balanceOf(treasury), treasuryBefore - amount);
+            assertEq(prime.balanceOf(recipient), amount);
+            // Only meaningful when the two accounts are distinct; summing the
+            // same account twice would double-count it.
+            assertEq(prime.balanceOf(treasury) + prime.balanceOf(recipient), treasuryBefore);
+        }
     }
 }
