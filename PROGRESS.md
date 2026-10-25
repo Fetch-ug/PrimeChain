@@ -3,7 +3,7 @@
 A fresh session should be able to read this file plus [DECISIONS.md](DECISIONS.md) and continue without re-deriving anything.
 
 **Current phase:** 1 — Local devnet + Prime token
-**Status:** Phase 2 — `RewardDistributor` ✅ CI #7. `ItemRegistry`: run #8 **failed on one test** (OZ `uri()` semantics), fix applied, awaiting run #9. Freeze (ADR-020) approved but **not written** until ItemRegistry is green.
+**Status:** Phase 2 — `RewardDistributor` ✅ CI #7. `ItemRegistry` ✅ **proven by CI #9**. Freeze (ADR-020) written, awaiting CI #10. Crafting/Marketplace/Storage/FeeSink not started.
 **Last updated:** 2026-10-24
 
 ---
@@ -238,6 +238,30 @@ Consequence recorded and mitigated: schema changes become migrations, documented
 abort conditions). **Open item:** `ItemRegistry` as written has no `freeze()`, and MIGRATION
 §4 recommends adding a one-way freeze *before deployment* so the snapshot can be atomic.
 That is a decision for the next contract change, not a defect in the current one.
+
+### Run 9 — commit `41d3653` — Phase 2, ItemRegistry — ✅ **GREEN**
+
+URL: https://github.com/Fetch-ug/PrimeChain/actions/runs/40087845923 (3m05s)
+
+build ✅ · tests ✅ · 100% coverage gate ✅ (Prime + RewardDistributor) · deploy + RPC smoke ✅ ·
+`secrets` ✅ · format ✅
+
+**`ItemRegistry` is proven by CI.** Supply-cap, outstanding ≤ minted, mint−burn conservation
+and content-hash invariants all held with the vacuity guard active and the target set
+restricted to the handler. The URI failure from run #8 is closed.
+
+### Freeze implemented (ADR-020) — awaiting run 10
+
+Held until run #9 was green, as instructed.
+
+| File | Change |
+|---|---|
+| `contracts/src/ItemRegistry.sol` | `frozen` flag; `freeze()` restricted to `DEFAULT_ADMIN_ROLE`; `Frozen` event; `_update` guard (single choke point, so mint/burn/transfer cannot drift apart) |
+| `contracts/test/ItemRegistry.t.sol` | 8 tests: admin-only with registrar/module/stranger negatives **and** a positive control; blocks transfer, mint and burn; no balance/supply/hash movement across the call; one-way (`AlreadyFrozen`) plus proof that no `unfreeze()` selector exists; metadata still updatable while frozen |
+| `MIGRATION.md` §4 | crafting pauses while frozen, by design; UI must say so |
+| `DECISIONS.md` ADR-020 | burn blocking confirmed by client; crafting consequence recorded |
+
+**Not proven yet:** the freeze itself. Run #10 is the first execution of these tests.
 
 ---
 

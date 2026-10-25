@@ -13,6 +13,7 @@ contract ItemRegistryTest is Test {
     event MetadataURIUpdated(uint256 indexed itemTypeId, string metadataURI);
     event ItemMinted(address indexed to, uint256 indexed itemTypeId, uint256 amount);
     event ItemBurned(address indexed from, uint256 indexed itemTypeId, uint256 amount);
+    event Frozen(address indexed account);
 
     ItemRegistry internal registry;
 
@@ -275,5 +276,130 @@ contract ItemRegistryTest is Test {
     function test_GetItemTypeRevertsForUnknown() public {
         vm.expectRevert(abi.encodeWithSelector(ItemRegistry.NotRegistered.selector, uint256(7)));
         registry.getItemType(7);
+    }
+
+    // ---------------------------------------------------------------------
+    // Migration freeze (ADR-020)
+    //
+    // The contract is immutable, so the freeze is the only migration tool: it makes a V2
+    // snapshot atomic. Each test below pins one of the client's stated constraints.
+    // ---------------------------------------------------------------------
+
+    function test_FreezeEmitsEventAndSetsFlag() public {
+        vm.expectEmit(true, false, false, true);
+        emit Frozen(address(this));
+
+        registry.freeze();
+
+        assertTrue(registry.frozen());
+    }
+
+    function test_FreezeOnlyTimelockAdmin() public {
+        address admin = makeAddr("freezeAdmin");
+        address registrar = makeAddr("freezeRegistrar");
+        address module = makeAddr("freezeModule");
+        ItemRegistry r = new ItemRegistry(admin, registrar, module, "");
+
+        // Read the role BEFORE any prank; a getter between prank and call consumes it.
+        bytes32 adminRole = r.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(registrar);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, registrar, adminRole)
+        );
+        r.freeze();
+        assertFalse(r.frozen(), "registrar must not be able to freeze");
+
+        vm.prank(module);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, module, adminRole)
+        );
+        r.freeze();
+        assertFalse(r.frozen(), "module must not be able to freeze");
+
+        address stranger = makeAddr("freezeStranger");
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, adminRole)
+        );
+        r.freeze();
+        assertFalse(r.frozen(), "stranger must not be able to freeze");
+
+        // Positive control: the admin can.
+        vm.prank(admin);
+        r.freeze();
+        assertTrue(r.frozen(), "admin must be able to freeze");
+    }
+
+    function test_FrozenBlocksTransfer() public {
+        _mint(alice, 10);
+        registry.freeze();
+
+        vm.prank(alice);
+        vm.expectRevert(ItemRegistry.ContractFrozen.selector);
+        registry.safeTransferFrom(alice, bob, ITEM, 1, "");
+
+        assertEq(registry.balanceOf(alice, ITEM), 10, "balance must be untouched");
+    }
+
+    function test_FrozenBlocksMint() public {
+        registry.freeze();
+
+        vm.expectRevert(ItemRegistry.ContractFrozen.selector);
+        registry.mint(alice, ITEM, 1, "");
+    }
+
+    function test_FrozenBlocksBurn() public {
+        _mint(alice, 10);
+        registry.freeze();
+
+        // Burn is blocked too: a MODULE burn after the snapshot would silently change a
+        // player's recorded balance. Crafting therefore pauses while frozen (MIGRATION §4).
+        vm.expectRevert(ItemRegistry.ContractFrozen.selector);
+        registry.burn(alice, ITEM, 1);
+
+        assertEq(registry.balanceOf(alice, ITEM), 10, "balance must be untouched");
+    }
+
+    function test_FreezeCannotMoveBurnOrReassignAnything() public {
+        _mint(alice, 10);
+
+        uint256 aliceBefore = registry.balanceOf(alice, ITEM);
+        uint256 bobBefore = registry.balanceOf(bob, ITEM);
+        uint256 supplyBefore = registry.totalSupply(ITEM);
+        uint256 mintedBefore = registry.mintedOf(ITEM);
+        uint256 capBefore = registry.supplyCapOf(ITEM);
+        bytes32 hashBefore = registry.contentHashOf(ITEM);
+
+        registry.freeze();
+
+        assertEq(registry.balanceOf(alice, ITEM), aliceBefore);
+        assertEq(registry.balanceOf(bob, ITEM), bobBefore);
+        assertEq(registry.totalSupply(ITEM), supplyBefore);
+        assertEq(registry.mintedOf(ITEM), mintedBefore);
+        assertEq(registry.supplyCapOf(ITEM), capBefore);
+        assertEq(registry.contentHashOf(ITEM), hashBefore);
+    }
+
+    function test_FreezeIsOneWay() public {
+        registry.freeze();
+
+        vm.expectRevert(ItemRegistry.AlreadyFrozen.selector);
+        registry.freeze();
+
+        // No unfreeze selector exists at all; a call to one must fail.
+        (bool ok, ) = address(registry).call(abi.encodeWithSignature("unfreeze()"));
+        assertFalse(ok, "there must be no unfreeze path");
+        assertTrue(registry.frozen());
+    }
+
+    function test_MetadataStillUpdatableWhileFrozen() public {
+        registry.freeze();
+
+        // URIs are not balances; moving a CDN during a migration is legitimate.
+        registry.setMetadataURI(ITEM, "ipfs://frozen/42.json");
+
+        assertEq(registry.uri(ITEM), "ipfs://frozen/42.json");
+        assertEq(registry.contentHashOf(ITEM), HASH, "content hash still immutable");
     }
 }

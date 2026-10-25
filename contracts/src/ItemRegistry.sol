@@ -54,12 +54,19 @@ contract ItemRegistry is ERC1155Supply, AccessControl {
     mapping(uint256 => ItemType) private _items;
     mapping(uint256 => bool) private _registered;
 
+    /// @notice Terminal migration state. Once true, no balance can ever change again.
+    /// @dev One-way by construction: there is no unfreeze path anywhere in this contract.
+    bool public frozen;
+
     event ItemTypeRegistered(
         uint256 indexed itemTypeId, bytes32 contentHash, uint64 supplyCap, string metadataURI
     );
     event MetadataURIUpdated(uint256 indexed itemTypeId, string metadataURI);
     event ItemMinted(address indexed to, uint256 indexed itemTypeId, uint256 amount);
     event ItemBurned(address indexed from, uint256 indexed itemTypeId, uint256 amount);
+
+    /// @notice Emitted exactly once, when the catalogue becomes read-only for balances.
+    event Frozen(address indexed account);
 
     error ZeroAddress();
     error ZeroAmount();
@@ -68,6 +75,8 @@ contract ItemRegistry is ERC1155Supply, AccessControl {
     error AlreadyRegistered(uint256 itemTypeId);
     error NotRegistered(uint256 itemTypeId);
     error SupplyCapExceeded(uint256 itemTypeId, uint256 requested, uint256 available);
+    error AlreadyFrozen();
+    error ContractFrozen();
 
     /**
      * @param admin Timelock.
@@ -164,6 +173,28 @@ contract ItemRegistry is ERC1155Supply, AccessControl {
     }
 
     // ---------------------------------------------------------------------
+    // Migration freeze (ADR-020)
+    // ---------------------------------------------------------------------
+
+    /**
+     * @notice Permanently make every balance immutable, so a V2 migration can be snapshotted.
+     * @dev Callable ONLY by DEFAULT_ADMIN_ROLE (the Timelock). Not the registrar, not a game
+     *      module, not an ops key: exactly one slow authority can end trading, and the
+     *      function takes no arguments and touches no balance, so it cannot move, burn or
+     *      reassign anything. There is no unfreeze.
+     *
+     *      It blocks `_update`, which covers mint, burn AND transfer. Blocking burn is
+     *      deliberate: a MODULE burn after the snapshot would silently change a player's
+     *      recorded balance. Consequence: Crafting (which burns recipe inputs) pauses while
+     *      frozen, by design — see MIGRATION.md §4.
+     */
+    function freeze() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (frozen) revert AlreadyFrozen();
+        frozen = true;
+        emit Frozen(msg.sender);
+    }
+
+    // ---------------------------------------------------------------------
     // Views
     // ---------------------------------------------------------------------
 
@@ -214,6 +245,16 @@ contract ItemRegistry is ERC1155Supply, AccessControl {
     // ---------------------------------------------------------------------
     // Internal
     // ---------------------------------------------------------------------
+
+    /// @dev Single choke point for every balance change. The freeze guard lives here so
+    ///      mint, burn and transfer cannot drift apart: one flag, one check, no exceptions.
+    function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
+        internal
+        override(ERC1155, ERC1155Supply)
+    {
+        if (frozen) revert ContractFrozen();
+        super._update(from, to, ids, values);
+    }
 
     function _requireRegistered(uint256 itemTypeId) private view returns (ItemType storage item) {
         if (!_registered[itemTypeId]) revert NotRegistered(itemTypeId);

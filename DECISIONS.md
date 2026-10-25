@@ -414,10 +414,11 @@ function _update(address from, address to, uint256[] memory ids, uint256[] memor
    control for the admin.
 2. **One-way.** No `unfreeze()`. A second `freeze()` reverts `AlreadyFrozen`.
 3. **Blocks mint and transfer.**
-4. **Also blocks burn** — deliberate refinement of the client's wording. `_update` is the
-   single choke point, and a MODULE burn after the snapshot would silently change a player's
-   recorded balance. If burns must stay possible while frozen, that is a one-line change
-   (permit `to == address(0)`); flagged rather than assumed.
+4. **Also blocks burn** — confirmed by the client on 2026-10-24. `_update` is the single
+   choke point, and a MODULE burn after the snapshot would silently change a player's
+   recorded balance. **Consequence, recorded in MIGRATION.md §4:** `Crafting` burns recipe
+   inputs, so crafting pauses while frozen by design, and the client must present that as
+   "crafting paused for migration", not as a raw revert.
 5. **The function can never move, burn or reassign anything.** It takes no arguments and
    touches no balance. Proven by asserting every tracked balance and `totalSupply` are
    unchanged across the call.

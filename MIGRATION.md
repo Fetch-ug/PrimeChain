@@ -64,6 +64,14 @@ After deployment this is the only path that makes the snapshot atomic. Without i
 migration depends on a coordinated marketplace shutdown and any post-snapshot P2P transfer is
 silently unhonoured.
 
+**Crafting pauses while frozen — by design.** `Crafting` burns recipe inputs through
+`MODULE_ROLE`. Because the freeze blocks `_update` and therefore `burn`, a craft attempt
+while frozen reverts. That is intended: item supply must not change underneath the snapshot.
+The client must show *"crafting paused for migration"* rather than surfacing a raw
+`ContractFrozen` revert, and that UI copy belongs in the migration announcement, not in a
+release note afterwards. The same applies to anything else that burns — currently only
+crafting.
+
 ---
 
 ## 5. Snapshot
